@@ -1,10 +1,10 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { BrowserMultiFormatReader } from '@zxing/library';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Camera, Type, Scan, StopCircle } from 'lucide-react';
+import { Camera, Type, Scan, StopCircle, Usb } from 'lucide-react';
 import { ScanResult } from '@/types/barcode';
 
 interface BarcodeScannerProps {
@@ -14,10 +14,13 @@ interface BarcodeScannerProps {
 export function BarcodeScanner({ onScanSuccess }: BarcodeScannerProps) {
   const [isScanning, setIsScanning] = useState(false);
   const [manualCode, setManualCode] = useState('');
-  const [scanMode, setScanMode] = useState<'camera' | 'manual'>('camera');
+  const [scanMode, setScanMode] = useState<'camera' | 'manual' | 'usb'>('camera');
   const [error, setError] = useState<string | null>(null);
+  const [usbBuffer, setUsbBuffer] = useState('');
+  const [isUsbListening, setIsUsbListening] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const codeReader = useRef<BrowserMultiFormatReader>(new BrowserMultiFormatReader());
+  const usbTimeoutRef = useRef<NodeJS.Timeout>();
 
   const startScanning = useCallback(async () => {
     if (!videoRef.current) return;
@@ -72,6 +75,68 @@ export function BarcodeScanner({ onScanSuccess }: BarcodeScannerProps) {
     }
   };
 
+  // USB Scanner functionality
+  const handleUsbKeyPress = useCallback((e: KeyboardEvent) => {
+    if (scanMode !== 'usb' || !isUsbListening) return;
+    
+    // Clear any existing timeout
+    if (usbTimeoutRef.current) {
+      clearTimeout(usbTimeoutRef.current);
+    }
+    
+    if (e.key === 'Enter') {
+      // USB scanner usually sends Enter after the barcode
+      if (usbBuffer.trim()) {
+        onScanSuccess({ code: usbBuffer.trim() });
+        setUsbBuffer('');
+      }
+    } else if (e.key.length === 1) {
+      // Regular character input
+      setUsbBuffer(prev => prev + e.key);
+      
+      // Reset buffer after 100ms of inactivity (typical for USB scanners)
+      usbTimeoutRef.current = setTimeout(() => {
+        setUsbBuffer('');
+      }, 100);
+    }
+  }, [scanMode, isUsbListening, usbBuffer, onScanSuccess]);
+
+  const startUsbListening = () => {
+    setIsUsbListening(true);
+    setUsbBuffer('');
+    setError(null);
+  };
+
+  const stopUsbListening = () => {
+    setIsUsbListening(false);
+    setUsbBuffer('');
+    if (usbTimeoutRef.current) {
+      clearTimeout(usbTimeoutRef.current);
+    }
+  };
+
+  // Add/remove USB scanner event listeners
+  useEffect(() => {
+    if (scanMode === 'usb' && isUsbListening) {
+      document.addEventListener('keydown', handleUsbKeyPress);
+      return () => {
+        document.removeEventListener('keydown', handleUsbKeyPress);
+        if (usbTimeoutRef.current) {
+          clearTimeout(usbTimeoutRef.current);
+        }
+      };
+    }
+  }, [scanMode, isUsbListening, handleUsbKeyPress]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (usbTimeoutRef.current) {
+        clearTimeout(usbTimeoutRef.current);
+      }
+    };
+  }, []);
+
   return (
     <Card className="shadow-scanner">
       <CardHeader className="bg-gradient-scanner text-primary-foreground">
@@ -90,6 +155,14 @@ export function BarcodeScanner({ onScanSuccess }: BarcodeScannerProps) {
           >
             <Camera className="h-4 w-4 mr-2" />
             Camera
+          </Button>
+          <Button
+            variant={scanMode === 'usb' ? 'default' : 'outline'}
+            onClick={() => setScanMode('usb')}
+            className="flex-1"
+          >
+            <Usb className="h-4 w-4 mr-2" />
+            USB
           </Button>
           <Button
             variant={scanMode === 'manual' ? 'default' : 'outline'}
@@ -147,6 +220,47 @@ export function BarcodeScanner({ onScanSuccess }: BarcodeScannerProps) {
                 <Button onClick={stopScanning} variant="destructive" className="flex-1">
                   <StopCircle className="h-4 w-4 mr-2" />
                   Stop Scanning
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* USB Scanner */}
+        {scanMode === 'usb' && (
+          <div className="space-y-4">
+            <div className="relative bg-scanner-bg rounded-lg p-8 border-2 border-dashed border-muted-foreground">
+              <div className="text-center space-y-4">
+                <div className="w-16 h-16 mx-auto bg-primary/10 rounded-lg flex items-center justify-center">
+                  <Usb className="h-8 w-8 text-primary" />
+                </div>
+                <div>
+                  <h3 className="font-semibold mb-2">USB Barcode Scanner</h3>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    {isUsbListening 
+                      ? 'Ready to scan - scan a barcode with your USB scanner'
+                      : 'Click start to enable USB scanner input'
+                    }
+                  </p>
+                  {usbBuffer && (
+                    <Badge variant="outline" className="font-mono">
+                      {usbBuffer}...
+                    </Badge>
+                  )}
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex gap-2">
+              {!isUsbListening ? (
+                <Button onClick={startUsbListening} className="flex-1 bg-gradient-scanner hover:opacity-90">
+                  <Usb className="h-4 w-4 mr-2" />
+                  Start USB Scanning
+                </Button>
+              ) : (
+                <Button onClick={stopUsbListening} variant="destructive" className="flex-1">
+                  <StopCircle className="h-4 w-4 mr-2" />
+                  Stop USB Scanning
                 </Button>
               )}
             </div>
